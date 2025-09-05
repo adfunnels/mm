@@ -102,11 +102,3 @@ Customer signs up → register domain → Gets API key → Installs snippet on s
 Visitor clicks ad → Lands on page → Snippet reads UTMs → 
 Fetches personalized content → Swaps page elements → Tracks events
 ```
-
-## 📝 License
-
-Proprietary - All Rights Reserved
-
-## 🤝 Support
-
-For questions or issues, contact: support@yourdomain.com
