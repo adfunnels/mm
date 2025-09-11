@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react';
+import Request from '@/lib/request';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,7 +14,7 @@ import { CampaignRowView } from '@/components/CampaignRowView';
 import { CampaignCreator } from '@/components/CampaignCreator';
 import { CopyVariationEditor } from '@/components/CopyVariationEditor';
 import { UTMGenerator } from '@/components/UTMGenerator';
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'react-toastify';
 
 interface Campaign {
   id: string;
@@ -33,8 +34,18 @@ interface Campaign {
   landingPageUrl?: string;
 }
 
+interface UserProfile {
+  id: string;
+  name: string | null;
+  email: string;
+  company: string | null;
+  timezone: string;
+  projectName: string | null;
+  primaryDomain: string | null;
+  siteId: string | null;
+}
+
 export default function DashboardPage() {
-  const { toast } = useToast();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
@@ -44,37 +55,37 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState('campaigns');
   const [landingPageUrl, setLandingPageUrl] = useState('https://yourlandingpage.com');
   const [isEditingUrl, setIsEditingUrl] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  // Load campaigns - temporarily without auth
+  // Load campaigns and user profile
   useEffect(() => {
     loadCampaigns();
+    loadUserProfile();
     // Load saved landing page URL from localStorage
     const savedUrl = localStorage.getItem('landingPageUrl');
     if (savedUrl) {
       setLandingPageUrl(savedUrl);
     }
-  }, []);
+  }, []); 
 
-  // Clear localStorage on mount if there's corrupted data (debugging helper)
-  useEffect(() => {
-    // Uncomment this line if you need to clear all campaign data and start fresh
-    // localStorage.removeItem('campaigns');
-  }, []);
+  const loadUserProfile = async () => {
+    try {
+      const response = await Request.Get('/api/user/profile');
+      setUserProfile(response);
+      // Update landingPageUrl with primaryDomain if available
+      if (response.primaryDomain) {
+        setLandingPageUrl(response.primaryDomain);
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+    }
+  };
+
 
   const loadCampaigns = async () => {
     try {
-      // Load campaigns from localStorage
-      const savedCampaigns = localStorage.getItem('campaigns');
-      let userCampaigns: Campaign[] = [];
-      
-      if (savedCampaigns) {
-        try {
-          userCampaigns = JSON.parse(savedCampaigns);
-        } catch (error) {
-          console.error('Failed to parse saved campaigns:', error);
-          userCampaigns = [];
-        }
-      }
+      // Load campaigns from API
+      const userCampaigns: Campaign[] = await Request.Get('/api/campaigns');
 
       // Add demo test campaign if not hidden
       const testCampaign: Campaign = {
@@ -96,7 +107,6 @@ export default function DashboardPage() {
       
       // Always put test campaign at the end
       setCampaigns([...userCampaigns, testCampaign]);
-      console.log('Loaded campaigns:', [...userCampaigns, testCampaign]);
     } catch (error) {
       console.error('Error in loadCampaigns:', error);
     } finally {
@@ -111,46 +121,29 @@ export default function DashboardPage() {
 
   const handleSaveNewCampaign = async (newCampaign: Campaign) => {
     try {
-      // Generate unique ID
-      const campaignWithId = {
-        ...newCampaign,
-        id: Date.now().toString(),
-        clicks: 0,
-        conversions: 0,
-        archived: false
-      };
-      
-      // Get existing campaigns from localStorage
-      const savedCampaigns = localStorage.getItem('campaigns');
-      let existingCampaigns: Campaign[] = [];
-      
-      if (savedCampaigns) {
-        try {
-          existingCampaigns = JSON.parse(savedCampaigns);
-        } catch (error) {
-          console.error('Failed to parse existing campaigns:', error);
-          existingCampaigns = [];
-        }
-      }
-      
-      // Add new campaign to the beginning
-      const updatedCampaigns = [campaignWithId, ...existingCampaigns];
-      
-      // Save to localStorage
-      localStorage.setItem('campaigns', JSON.stringify(updatedCampaigns));
-      console.log('Saved campaigns to localStorage:', updatedCampaigns);
+      // Create campaign via API
+      const savedCampaign: Campaign = await Request.Post('/api/campaigns', newCampaign);
 
       // Update state - keep test campaign at the end
       setCampaigns(prev => {
         const withoutTest = prev.filter(c => c.id !== 'test-campaign');
         const testCampaign = prev.find(c => c.id === 'test-campaign');
-        return testCampaign ? [campaignWithId, ...withoutTest, testCampaign] : [campaignWithId, ...withoutTest];
+        return testCampaign ? [savedCampaign, ...withoutTest, testCampaign] : [savedCampaign, ...withoutTest];
       });
       
       setIsCreatingCampaign(false);
-      setSelectedCampaign(campaignWithId);
-    } catch (error) {
+      setSelectedCampaign(savedCampaign);
+      
+      toast.success('Campaign created successfully!', {theme: 'colored'});
+    } catch (error: any) {
       console.error('Error saving campaign:', error);
+      
+      // Handle duplicate UTM parameters error
+      if (error?.response?.status === 409) {
+        toast.error('A campaign with these UTM parameters already exists. Please use different values.', {theme: 'colored'});
+      } else {
+        toast.error('Failed to create campaign. Please try again.', {theme: 'colored'});
+      }
     }
   };
 
@@ -170,33 +163,14 @@ export default function DashboardPage() {
         return;
       }
 
-      // Handle real campaigns (save to localStorage)
-      const savedCampaigns = localStorage.getItem('campaigns');
-      let campaigns: Campaign[] = [];
-      
-      if (savedCampaigns) {
-        try {
-          campaigns = JSON.parse(savedCampaigns);
-        } catch (error) {
-          console.error('Failed to parse saved campaigns:', error);
-          campaigns = [];
-        }
-      }
-      
-      // Update the specific campaign
-      const updatedCampaigns = campaigns.map(c => 
-        c.id === updatedCampaign.id ? updatedCampaign : c
-      );
-      
-      // Save back to localStorage
-      localStorage.setItem('campaigns', JSON.stringify(updatedCampaigns));
-      console.log('Updated campaigns in localStorage:', updatedCampaigns);
+      // Update campaign via API
+      const savedCampaign: Campaign = await Request.Put('/api/campaigns', updatedCampaign);
 
       // Update state
       setCampaigns(prev => prev.map(c => 
-        c.id === updatedCampaign.id ? updatedCampaign : c
+        c.id === savedCampaign.id ? savedCampaign : c
       ));
-      setSelectedCampaign(updatedCampaign);
+      setSelectedCampaign(savedCampaign);
     } catch (error) {
       console.error('Error updating campaign:', error);
     }
@@ -250,7 +224,7 @@ export default function DashboardPage() {
                       <Input
                         value={landingPageUrl}
                         onChange={(e) => setLandingPageUrl(e.target.value)}
-                        placeholder="https://yourlandingpage.com"
+                        placeholder={userProfile?.primaryDomain || "https://yourlandingpage.com"}
                         className="text-sm font-mono h-8"
                       />
                       <Button size="sm" onClick={handleSaveLandingPageUrl} className="h-8 w-8 p-0">
@@ -263,7 +237,7 @@ export default function DashboardPage() {
                   ) : (
                     <div className="flex items-center space-x-2 mt-1">
                       <code className="text-sm font-mono bg-muted px-2 py-1 rounded block flex-1 truncate">
-                        {landingPageUrl}
+                        {userProfile?.primaryDomain || landingPageUrl}
                       </code>
                       <Button 
                         variant="outline" 
@@ -287,14 +261,16 @@ export default function DashboardPage() {
                 <div>
                   <Label className="text-xs text-muted-foreground">Site ID:</Label>
                   <code className="text-sm font-mono bg-muted px-2 py-1 rounded block">
-                    proj_copy_ai_main_2024
+                    {userProfile?.siteId || 'Not configured'}
                   </code>
                 </div>
                 <Button 
                   variant="outline" 
                   size="sm"
                   onClick={() => {
-                    navigator.clipboard.writeText('proj_copy_ai_main_2024');
+                    const siteId = userProfile?.siteId || 'Not configured';
+                    navigator.clipboard.writeText(siteId);
+                    toast.success('Site ID copied to clipboard!', { theme: 'colored' });
                   }}
                 >
                   Copy
@@ -383,116 +359,115 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Content */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-          <TabsTrigger value="editor">Copy Editor</TabsTrigger>
-          <TabsTrigger value="utm">UTM Generator</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="campaigns" className="space-y-6">
-          {/* View Controls */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Button
-                  variant={hideTestCampaign ? "outline" : "ghost"}
-                  size="sm"
-                  onClick={() => setHideTestCampaign(!hideTestCampaign)}
-                  className="text-sm"
-                >
-                  {hideTestCampaign ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
-                  {hideTestCampaign ? 'Show' : 'Hide'} Test Campaign
-                </Button>
-              </div>
-            </div>
-            
-            <div className="flex items-center space-x-2">
-              <Button
-                variant={viewMode === 'grid' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('grid')}
-              >
-                <Grid3X3 className="w-4 h-4 mr-2" />
-                Grid
-              </Button>
-              <Button
-                variant={viewMode === 'row' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('row')}
-              >
-                <List className="w-4 h-4 mr-2" />
-                Row
-              </Button>
-            </div>
-          </div>
-
-          {/* Campaigns Display */}
-          {viewMode === 'grid' ? (
-            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-              {campaigns
-                .filter(campaign => !(hideTestCampaign && campaign.id === 'test-campaign'))
-                .map((campaign) => (
-                  <CampaignCard
-                    key={campaign.id}
-                    campaign={campaign}
-                    onClick={() => setSelectedCampaign(campaign)}
-                    onEdit={() => handleEditCampaign(campaign)}
-                    onViewAnalytics={() => {
-                      window.location.href = '/analytics';
-                    }}
-                    baseUrl={campaign.landingPageUrl || landingPageUrl}
-                  />
-                ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {/* Row View Header */}
-              <div className="grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-muted-foreground border-b">
-                <div className="col-span-3">Campaign</div>
-                <div className="col-span-3">Copy Preview</div>
-                <div className="col-span-2 text-center">Clicks</div>
-                <div className="col-span-2 text-center">Conv. Rate</div>
-                <div className="col-span-2 text-center">Actions</div>
-              </div>
-              
-              {campaigns
-                .filter(campaign => !(hideTestCampaign && campaign.id === 'test-campaign'))
-                .map((campaign) => (
-                  <CampaignRowView
-                    key={campaign.id}
-                    campaign={campaign}
-                    onClick={() => setSelectedCampaign(campaign)}
-                    onEdit={() => handleEditCampaign(campaign)}
-                    onViewAnalytics={() => {
-                      window.location.href = '/analytics';
-                    }}
-                    baseUrl={campaign.landingPageUrl || landingPageUrl}
-                  />
-                ))}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="editor">
-          <CopyVariationEditor 
-            campaign={selectedCampaign} 
-            onSave={handleUpdateCampaign}
-            onCancel={() => setSelectedCampaign(null)}
-          />
-        </TabsContent>
-
-        <TabsContent value="utm">
-          <UTMGenerator landingPageUrl={landingPageUrl} />
-        </TabsContent>
-      </Tabs>
-
-      {/* Campaign Creation Dialog */}
-      {isCreatingCampaign && (
+      {isCreatingCampaign ? (
         <CampaignCreator
           onSave={handleSaveNewCampaign}
           onCancel={handleCancelCreateCampaign}
         />
+      ) : (
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
+            <TabsTrigger value="editor">Copy Editor</TabsTrigger>
+            <TabsTrigger value="utm">UTM Generator</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="campaigns" className="space-y-6">
+            {/* View Controls */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <Button
+                    variant={hideTestCampaign ? "outline" : "ghost"}
+                    size="sm"
+                    onClick={() => setHideTestCampaign(!hideTestCampaign)}
+                    className="text-sm"
+                  >
+                    {hideTestCampaign ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+                    {hideTestCampaign ? 'Show' : 'Hide'} Test Campaign
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Button
+                  variant={viewMode === 'grid' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setViewMode('grid')}
+                >
+                  <Grid3X3 className="w-4 h-4 mr-2" />
+                  Grid
+                </Button>
+                <Button
+                  variant={viewMode === 'row' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setViewMode('row')}
+                >
+                  <List className="w-4 h-4 mr-2" />
+                  Row
+                </Button>
+              </div>
+            </div>
+
+            {/* Campaigns Display */}
+            {viewMode === 'grid' ? (
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                {campaigns
+                  .filter(campaign => !(hideTestCampaign && campaign.id === 'test-campaign'))
+                  .map((campaign) => (
+                    <CampaignCard
+                      key={campaign.id}
+                      campaign={campaign}
+                      onClick={() => setSelectedCampaign(campaign)}
+                      onEdit={() => handleEditCampaign(campaign)}
+                      onViewAnalytics={() => {
+                        window.location.href = '/analytics';
+                      }}
+                      baseUrl={campaign.landingPageUrl || landingPageUrl}
+                    />
+                  ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {/* Row View Header */}
+                <div className="grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-muted-foreground border-b">
+                  <div className="col-span-3">Campaign</div>
+                  <div className="col-span-3">Copy Preview</div>
+                  <div className="col-span-2 text-center">Clicks</div>
+                  <div className="col-span-2 text-center">Conv. Rate</div>
+                  <div className="col-span-2 text-center">Actions</div>
+                </div>
+                
+                {campaigns
+                  .filter(campaign => !(hideTestCampaign && campaign.id === 'test-campaign'))
+                  .map((campaign) => (
+                    <CampaignRowView
+                      key={campaign.id}
+                      campaign={campaign}
+                      onClick={() => setSelectedCampaign(campaign)}
+                      onEdit={() => handleEditCampaign(campaign)}
+                      onViewAnalytics={() => {
+                        window.location.href = '/analytics';
+                      }}
+                      baseUrl={campaign.landingPageUrl || landingPageUrl}
+                    />
+                  ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="editor">
+            <CopyVariationEditor 
+              campaign={selectedCampaign} 
+              onSave={handleUpdateCampaign}
+              onCancel={() => setSelectedCampaign(null)}
+            />
+          </TabsContent>
+
+          <TabsContent value="utm">
+            <UTMGenerator landingPageUrl={landingPageUrl} />
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );
