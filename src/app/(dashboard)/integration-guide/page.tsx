@@ -464,7 +464,7 @@ export default function IntegrationGuide() {
                       
                       <p className="text-muted-foreground mb-3">{step.description}</p>
                       
-                      {step.isVideoTutorial && activeTab === 'gohighlevel' ? (
+                      {'isVideoTutorial' in step && step.isVideoTutorial && activeTab === 'gohighlevel' ? (
                         <div className="mb-4">
                           <VideoTutorial />
                         </div>
@@ -479,11 +479,11 @@ export default function IntegrationGuide() {
                             ))}
                           </ul>
 
-                          {step.code && (
+                          {'code' in step && step.code && (
                             <div className="mt-4">
                               <h4 className="text-sm font-medium mb-2">Code Example:</h4>
                               <div className="bg-slate-900 text-green-400 p-3 rounded-lg font-mono text-xs">
-                                <pre className="whitespace-pre-wrap overflow-x-auto">{step.code}</pre>
+                                <pre className="whitespace-pre-wrap overflow-x-auto">{'code' in step ? step.code : ''}</pre>
                               </div>
                             </div>
                           )}
